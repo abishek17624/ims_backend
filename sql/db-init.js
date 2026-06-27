@@ -13,37 +13,65 @@ const SQL_FILE = path.join(__dirname, 'init.sql');
 
 async function initializeDatabase(force = false) {
   const dbName = process.env.DB_NAME || 'stockeasy_db';
-  
-  // Connect WITHOUT specifying a database so we can CREATE DATABASE
-  const conn = await mysql.createConnection({
-    host:            process.env.DB_HOST     || 'localhost',
-    user:            process.env.DB_USER     || 'root',
-    password:        process.env.DB_PASSWORD || '',
-    multipleStatements: true,           // required to run the whole SQL file at once
-  });
+  const dbPort = parseInt(process.env.DB_PORT || '3306');
+  let conn;
+
+  try {
+    // 1. Try to connect directly to the target database (needed for remote/shared hostings like Clever Cloud)
+    conn = await mysql.createConnection({
+      host:            process.env.DB_HOST     || 'localhost',
+      port:            dbPort,
+      user:            process.env.DB_USER     || 'root',
+      password:        process.env.DB_PASSWORD || '',
+      database:        dbName,
+      multipleStatements: true,
+    });
+  } catch (err) {
+    // If the database doesn't exist (e.g. fresh local install), try connecting without database to create it
+    if (err.code === 'ER_BAD_DB_ERROR' || err.errno === 1049) {
+      try {
+        conn = await mysql.createConnection({
+          host:            process.env.DB_HOST     || 'localhost',
+          port:            dbPort,
+          user:            process.env.DB_USER     || 'root',
+          password:        process.env.DB_PASSWORD || '',
+          multipleStatements: true,
+        });
+        console.log(`ℹ️ Database '${dbName}' not found. Attempting to create it...`);
+        await conn.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;`);
+        await conn.query(`USE \`${dbName}\``);
+      } catch (innerErr) {
+        console.error('❌ Failed to connect and create database:', innerErr.message);
+        throw innerErr;
+      }
+    } else {
+      console.error('❌ Database connection failed:', err.message);
+      throw err;
+    }
+  }
 
   try {
     if (!force) {
-      // 1. Check if database exists
-      const [databases] = await conn.query('SHOW DATABASES LIKE ?', [dbName]);
-      if (databases.length > 0) {
-        // 2. Database exists, check if 'users' table exists
-        await conn.query(`USE \`${dbName}\``);
-        const [tables] = await conn.query('SHOW TABLES LIKE "users"');
-        if (tables.length > 0) {
-          console.log(`ℹ️ Database '${dbName}' and tables already exist. Skipping initialization to protect data.`);
-          return;
-        }
+      // Check if 'users' table exists to decide if we need to run init.sql
+      const [tables] = await conn.query('SHOW TABLES LIKE "users"');
+      if (tables.length > 0) {
+        console.log(`ℹ️ Database '${dbName}' and tables already exist. Skipping initialization to protect data.`);
+        return;
       }
     }
 
     console.log('🚀 StockEasy DB Init — Starting...\n');
-    console.log(`✅ Connected to MySQL at ${process.env.DB_HOST || 'localhost'}`);
+    console.log(`✅ Connected to MySQL at ${process.env.DB_HOST || 'localhost'}:${dbPort}`);
 
-    const sql = fs.readFileSync(SQL_FILE, 'utf8');
+    let sql = fs.readFileSync(SQL_FILE, 'utf8');
+    
+    // Strip CREATE DATABASE and USE statements to allow running inside pre-allocated cloud databases
+    sql = sql.replace(/CREATE DATABASE[\s\S]*?;/gi, '');
+    sql = sql.replace(/USE `?[\w\-]+`?;/gi, '');
+
     await conn.query(sql);
     
-    console.log(`✅ Database '${dbName}' created and all tables seeded!`);
+    console.log(`✅ Database '${dbName}' initialized and all tables seeded!`);
     console.log('\n📋 Tables created:');
     const tables = [
       'users', 'admin', 'salesperson', 'supplier', 'category',
@@ -56,7 +84,7 @@ async function initializeDatabase(force = false) {
     console.error('❌ Error during database initialization:', err.message);
     throw err;
   } finally {
-    await conn.end();
+    if (conn) await conn.end();
   }
 }
 
