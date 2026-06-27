@@ -11,9 +11,9 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const SQL_FILE = path.join(__dirname, 'init.sql');
 
-async function main() {
-  console.log('🚀 StockEasy DB Init — Starting...\n');
-
+async function initializeDatabase(force = false) {
+  const dbName = process.env.DB_NAME || 'stockeasy_db';
+  
   // Connect WITHOUT specifying a database so we can CREATE DATABASE
   const conn = await mysql.createConnection({
     host:            process.env.DB_HOST     || 'localhost',
@@ -22,13 +22,28 @@ async function main() {
     multipleStatements: true,           // required to run the whole SQL file at once
   });
 
-  console.log(`✅ Connected to MySQL at ${process.env.DB_HOST || 'localhost'}`);
-
-  const sql = fs.readFileSync(SQL_FILE, 'utf8');
-
   try {
+    if (!force) {
+      // 1. Check if database exists
+      const [databases] = await conn.query('SHOW DATABASES LIKE ?', [dbName]);
+      if (databases.length > 0) {
+        // 2. Database exists, check if 'users' table exists
+        await conn.query(`USE \`${dbName}\``);
+        const [tables] = await conn.query('SHOW TABLES LIKE "users"');
+        if (tables.length > 0) {
+          console.log(`ℹ️ Database '${dbName}' and tables already exist. Skipping initialization to protect data.`);
+          return;
+        }
+      }
+    }
+
+    console.log('🚀 StockEasy DB Init — Starting...\n');
+    console.log(`✅ Connected to MySQL at ${process.env.DB_HOST || 'localhost'}`);
+
+    const sql = fs.readFileSync(SQL_FILE, 'utf8');
     await conn.query(sql);
-    console.log(`✅ Database '${process.env.DB_NAME || 'stockeasy_db'}' created and all tables seeded!`);
+    
+    console.log(`✅ Database '${dbName}' created and all tables seeded!`);
     console.log('\n📋 Tables created:');
     const tables = [
       'users', 'admin', 'salesperson', 'supplier', 'category',
@@ -36,13 +51,21 @@ async function main() {
       'content_home', 'content_about', 'content_features', 'feature_cards'
     ];
     tables.forEach(t => console.log(`   ✔ ${t}`));
-    console.log('\n🎉 Done! You can now run: npm start\n');
+    console.log('\n🎉 Database initialization complete!\n');
   } catch (err) {
-    console.error('❌ Error running init.sql:', err.message);
-    process.exit(1);
+    console.error('❌ Error during database initialization:', err.message);
+    throw err;
   } finally {
     await conn.end();
   }
 }
 
-main();
+// Run directly if this file is executed directly
+if (require.main === module) {
+  initializeDatabase(true)
+    .then(() => process.exit(0))
+    .catch(() => process.exit(1));
+}
+
+module.exports = { initializeDatabase };
+
