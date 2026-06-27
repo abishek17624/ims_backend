@@ -18,9 +18,14 @@ app.use(cookieParser()); // Add cookie parser middleware
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// Enable CORS for Angular frontend
+// Enable CORS for Angular frontend (both local development and deployed Vercel app)
+const allowedOrigins = [
+  'http://localhost:4200',
+  'https://stockeasy-ims.vercel.app'
+];
+
 app.use(cors({
-  origin: 'http://localhost:4200', // Replace with your Angular app's URL if different
+  origin: allowedOrigins,
   credentials: true
 }));
 
