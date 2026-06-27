@@ -1,6 +1,7 @@
 const express = require('express');
 const app = express();
 require('dotenv').config();
+const { initializeDatabase } = require('./sql/db-init');
 const adminRoutes = require('./routes/admin.routes');
 const salespersonRoutes = require('./routes/salesperson.routes');
 const supplierRoutes = require('./routes/supplier.routes');
@@ -68,4 +69,13 @@ app.use('/api/salesperson', salespersonRoutes);
 app.use('/api/supplier', supplierRoutes);
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+initializeDatabase()
+  .then(() => {
+    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+  })
+  .catch(err => {
+    console.error('❌ Failed to initialize database:', err);
+    process.exit(1);
+  });
+
